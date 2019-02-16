@@ -3,11 +3,16 @@ const ethUtil = require('ethereumjs-util')
 const Transaction = require('ethereumjs-tx')
 const HDKey = require('hdkey')
 const TrezorConnect = require('trezor-connect').default
-const hdPathString = `m/44'/60'/0'/0`
-const keyringType = 'Trezor Hardware'
+const hdPathString = `m/44'/60'/0'/0/0`
+const keyringType = 'KeepKey Hardware'
 const pathBase = 'm'
 const MAX_INDEX = 1000
 const DELAY_BETWEEN_POPUPS = 1000
+
+const keepkeyManager = new KeepKeyManager({
+  onConnectCallback: (deviceID) => console.log('device was connected!'), // These callbacks only work with webUSB at the moment
+  onDisconnectCallback: (deviceID) => console.log('device was disconnected!') 
+})
 
 class TrezorKeyring extends EventEmitter {
   constructor (opts = {}) {
@@ -20,6 +25,7 @@ class TrezorKeyring extends EventEmitter {
     this.unlockedAccount = 0
     this.paths = {}
     this.deserialize(opts)
+    this.keepkey = undefined
   }
 
   serialize () {
@@ -42,27 +48,33 @@ class TrezorKeyring extends EventEmitter {
   }
 
   isUnlocked () {
-    return !!(this.hdk && this.hdk.publicKey)
+    return !!(this.keepkey && this.hdk && this.hdk.publicKey)
   }
 
   unlock () {
     if (this.isUnlocked()) return Promise.resolve('already unlocked')
     return new Promise((resolve, reject) => {
-      TrezorConnect.getPublicKey({
-          path: this.hdPath,
-          coin: 'ETH',
+      keepKeyManager.initializeWebUSBDevices()
+      .then(() => {
+        return WebUSBDevice.requestPair()
+      })
+      .then(() => {
+        this.keepkey = keepKeyManager.get()
+        return this.keepkey.getPublicKey({
+          addressNList: this.hdPath,
+          coin: "Ethereum",
         }).then(response => {
-          if (response.success) {
-            this.hdk.publicKey = new Buffer(response.payload.publicKey, 'hex')
-            this.hdk.chainCode = new Buffer(response.payload.chainCode, 'hex')
-            resolve('just unlocked')
-          } else {
-            reject(response.payload && response.payload.error || 'Unknown error')
-          }
+          let node, xpub
+          [node, xpub] = response
+
+          this.hdk.publicKey = new Buffer(node.public_key, 'hex')
+          this.hdk.chainCode = new Buffer(node.chain_code, 'hex')
+          resolve('just unlocked')
         }).catch(e => {
           console.log('Error while trying to get public keys ', e)
           reject(e && e.toString() || 'Unknown error')
         })
+      })
     })
   }
 
@@ -155,36 +167,32 @@ class TrezorKeyring extends EventEmitter {
         this.unlock()
           .then(status => {
             setTimeout(_ => {
-              TrezorConnect.ethereumSignTransaction({
-                path: this._pathFromAddress(address),
-                transaction: {
+              this.keepkey.ethereumSignTx({
+                tx: {
+                  addressNList: this._pathFromAddress(address),
+                  nonce: this._normalize(tx.nonce),
+                  gasPrice: this._normalize(tx.gasLimit),
+                  gasLimit: this._normalize(tx.gasPrice),
                   to: this._normalize(tx.to),
                   value: this._normalize(tx.value),
-                  data: this._normalize(tx.data),
-                  chainId: tx._chainId,
-                  nonce: this._normalize(tx.nonce),
-                  gasLimit: this._normalize(tx.gasLimit),
-                  gasPrice: this._normalize(tx.gasPrice),
                 },
+                data: this._normalize(tx.data)
+                chainId: tx._chainId,
               }).then(response => {
-                if (response.success) {
-                  tx.v = response.payload.v
-                  tx.r = response.payload.r
-                  tx.s = response.payload.s
+                const { v, r, s } = response
+                tx.v = v
+                tx.r = r
+                tx.s = s
 
-                  const signedTx = new Transaction(tx)
+                const signedTx = new Transaction(tx)
 
-                  const addressSignedWith = ethUtil.toChecksumAddress(`0x${signedTx.from.toString('hex')}`)
-                  const correctAddress = ethUtil.toChecksumAddress(address)
-                  if (addressSignedWith !== correctAddress) {
-                    reject('signature doesnt match the right address')
-                  }
-
-                  resolve(signedTx)
-                } else {
-                  reject(response.payload && response.payload.error || 'Unknown error')
+                const addressSignedWith = ethUtil.toChecksumAddress(`0x${signedTx.from.toString('hex')}`)
+                const correctAddress = ethUtil.toChecksumAddress(address)
+                if (addressSignedWith !== correctAddress) {
+                  reject('signature doesnt match the right address')
                 }
 
+                resolve(signedTx)
               }).catch(e => {
                 console.log('Error while trying to sign transaction ', e)
                 reject(e && e.toString() || 'Unknown error')
@@ -212,19 +220,15 @@ class TrezorKeyring extends EventEmitter {
           .then(status => {
             setTimeout(_ => {
               const humanReadableMsg = this._toAscii(message)
-              TrezorConnect.ethereumSignMessage({
-                path: this._pathFromAddress(withAccount),
+              this.keepkey.ethereumSignMessage({
+                addressNList: this._pathFromAddress(withAccount),
                 message: humanReadableMsg,
               }).then(response => {
-                if (response.success) {
-                  if (response.payload.address !== ethUtil.toChecksumAddress(withAccount)) {
+                  if (response.address !== ethUtil.toChecksumAddress(withAccount)) {
                     reject('signature doesnt match the right address')
                   }
-                  const signature = `0x${response.payload.signature}`
+                  const signature = `0x${response.signature}`
                   resolve(signature)
-                } else {
-                  reject(response.payload && response.payload.error || 'Unknown error')
-                }
               }).catch(e => {
                 console.log('Error while trying to sign a message ', e)
                 reject(e && e.toString() || 'Unknown error')
@@ -303,5 +307,5 @@ class TrezorKeyring extends EventEmitter {
   }
 }
 
-TrezorKeyring.type = keyringType
-module.exports = TrezorKeyring
+KeepKeyKeyring.type = keyringType
+module.exports = KeepKeyKeyring
