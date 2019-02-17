@@ -55,12 +55,12 @@ class KeepKeyKeyring extends EventEmitter {
   unlock () {
     if (this.isUnlocked()) return Promise.resolve('already unlocked')
     return new Promise((resolve, reject) => {
-      keepKeyManager.initializeWebUSBDevices()
+      keepkeyManager.initializeWebUSBDevices()
       .then(() => {
         return WebUSBDevice.requestPair()
       })
       .then(() => {
-        this.keepkey = keepKeyManager.get()
+        this.keepkey = keepkeyManager.get()
         return this.keepkey.getPublicKey({
           addressNList: this.hdPath,
           coin: "Ethereum",
