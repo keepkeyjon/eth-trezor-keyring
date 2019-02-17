@@ -2,7 +2,8 @@ const { EventEmitter } = require('events')
 const ethUtil = require('ethereumjs-util')
 const Transaction = require('ethereumjs-tx')
 const HDKey = require('hdkey')
-const TrezorConnect = require('trezor-connect').default
+const KeepKeyJS = require('@keepkey/keepkey.js')
+const { KeepKeyManager, WebUSBDevice } = KeepKeyJS
 const hdPathString = `m/44'/60'/0'/0/0`
 const keyringType = 'KeepKey Hardware'
 const pathBase = 'm'
@@ -14,7 +15,7 @@ const keepkeyManager = new KeepKeyManager({
   onDisconnectCallback: (deviceID) => console.log('device was disconnected!') 
 })
 
-class TrezorKeyring extends EventEmitter {
+class KeepKeyKeyring extends EventEmitter {
   constructor (opts = {}) {
     super()
     this.type = keyringType
@@ -176,7 +177,7 @@ class TrezorKeyring extends EventEmitter {
                   to: this._normalize(tx.to),
                   value: this._normalize(tx.value),
                 },
-                data: this._normalize(tx.data)
+                data: this._normalize(tx.data),
                 chainId: tx._chainId,
               }).then(response => {
                 const { v, r, s } = response
